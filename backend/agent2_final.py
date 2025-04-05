@@ -279,21 +279,27 @@ class CropPlannerWorkflow(Workflow):
 
             logger.info(f"[CropPlanner] {crop} missing {missing} – refetching")
             crop_prompt = f"{location}\n{crop}"
+            # Log the specific prompt being passed for each missing domain.
             if "environmental" in missing:
+                logger.info(f"[CropPlanner] Refetching environmental info for {crop} with prompt:\n{crop_prompt}")
                 time.sleep(1)
                 env_refill: EnvironmentalResponse = self.safe_run(
                     environmental_info_agent, crop_prompt, EnvironmentalResponse()
                 )
                 if env_refill.environmental_factors:
                     env_map[crop] = env_refill.environmental_factors[0]
+
             if "marketing" in missing:
+                logger.info(f"[CropPlanner] Refetching marketing info for {crop} with prompt:\n{crop_prompt}")
                 time.sleep(1)
                 mkt_refill: MarketingResponse = self.safe_run(
                     marketing_info_agent, crop_prompt, MarketingResponse()
                 )
                 if mkt_refill.marketing_factors:
                     mkt_map[crop] = mkt_refill.marketing_factors[0]
+
             if "soil_health" in missing:
+                logger.info(f"[CropPlanner] Refetching soil-health info for {crop} with prompt:\n{crop_prompt}")
                 time.sleep(1)
                 sh_refill: SoilHealthResponse = self.safe_run(
                     soil_health_info_agent, crop_prompt, SoilHealthResponse()
@@ -303,7 +309,6 @@ class CropPlannerWorkflow(Workflow):
 
         # -- 4. Build per-crop report ---------------------------------------
         md: List[str] = ["# Crop Planner Detailed Report", ""]
-
         final_structured: Dict[str, Dict] = {}
         for crop in crop_list:
             env = env_map.get(crop)
@@ -342,7 +347,6 @@ class CropPlannerWorkflow(Workflow):
                 "marketing": mkt.dict() if mkt else {},
                 "soil_health": sh.dict() if sh else {},
             }
-
        
 
         # -- 7. Append conversation log -------------------------------------
