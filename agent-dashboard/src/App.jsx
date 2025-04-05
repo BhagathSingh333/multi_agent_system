@@ -1,67 +1,100 @@
-import { useState } from 'react';
+import { useState } from "react"
+import { Input } from "@/components/ui/input"
+import { Button } from "@/components/ui/button"
+import {
+  Accordion,
+  AccordionItem,
+  AccordionTrigger,
+  AccordionContent,
+} from "@/components/ui/accordion"
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
+import { Loader2 } from "lucide-react"
 
 function App() {
-  const [prompt, setPrompt] = useState('');
-  const [showAccordion, setShowAccordion] = useState(false); // controls visibility
-  const [isOpen, setIsOpen] = useState(true);               // controls toggle (open/close)
-  const [loading, setLoading] = useState(false);
-  const [output, setOutput] = useState('');
+  const [prompt, setPrompt] = useState("")
+  const [output, setOutput] = useState("")
+  const [loading, setLoading] = useState(false)
+  const [showAccordion, setShowAccordion] = useState(false)
 
   const handleSubmit = (e) => {
-    e.preventDefault();
-    setShowAccordion(true); // Show accordion on submit
-    setIsOpen(true);        // Reset to open state on submit
-    setLoading(true);
+    e.preventDefault()
+    setShowAccordion(true)
+    setLoading(true)
 
     setTimeout(() => {
-      setOutput(`Dummy output for: "${prompt}"`);
-      setLoading(false);
-    }, 2000);
-  };
+      setOutput(`Dummy output for: "${prompt}"`)
+      setLoading(false)
+    }, 2000)
+  }
 
   return (
-    <div style={{ padding: '30px', fontFamily: 'Arial', maxWidth: '600px', margin: 'auto' }}>
-      <h2>Multi-Agent Dashboard</h2>
-      <form onSubmit={handleSubmit}>
-        <input
-          type="text"
-          placeholder="Enter your prompt"
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          style={{ padding: '10px', fontSize: '16px', width: '80%' }}
-          required
-        />
-        <button type="submit" style={{ padding: '10px', marginLeft: '10px', fontSize: '16px' }}>
-          Submit
-        </button>
-      </form>
+    <div className="min-h-screen w-full bg-gradient-to-br from-pink-50 via-sky-100 to-purple-100 p-6 flex flex-col items-center gap-10">
+      {/* Header / Prompt Card */}
+      <Card className="w-full max-w-2xl backdrop-blur-md bg-white/80 border border-white/40 shadow-2xl rounded-2xl hover:shadow-purple-200 transition-shadow">
+        <CardHeader>
+          <CardTitle className="text-3xl font-bold text-indigo-800 flex items-center gap-2">
+            <span className="text-4xl">🧠</span> Multi-Agent Dashboard
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleSubmit} className="flex flex-col md:flex-row gap-4">
+            <Input
+              placeholder="Enter your prompt"
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              className="rounded-xl border-indigo-300 focus:border-indigo-500"
+              required
+            />
+            <Button
+              type="submit"
+              className="rounded-xl bg-gradient-to-r from-indigo-500 to-purple-600 text-white font-semibold shadow-md hover:brightness-110 transition-all"
+            >
+              Submit
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
 
+      {/* Agent Response */}
       {showAccordion && (
-        <div style={{ marginTop: '20px', border: '1px solid #ccc', borderRadius: '5px' }}>
-          <div
-            style={{ padding: '10px', cursor: 'pointer', backgroundColor: '#f1f1f1' }}
-            onClick={() => setIsOpen(!isOpen)}
-          >
-            <strong>{isOpen ? '▼' : '▶'} Agent Response</strong>
-          </div>
-          {isOpen && (
-            <div style={{ padding: '15px' }}>
-              <div>
-                <strong>User Prompt:</strong> {prompt}
+        <div className="w-full max-w-2xl">
+          <Accordion type="single" collapsible>
+            <AccordionItem value="item-1">
+              <div className="rounded-2xl shadow-xl border border-slate-200 bg-white">
+              <AccordionTrigger
+  className="flex items-center justify-between w-full px-6 py-4 bg-white text-slate-800 text-lg font-semibold rounded-t-2xl cursor-pointer"
+  style={{ textDecoration: "none" }}
+>
+  <div className="flex items-center gap-2">
+    <span className="text-2xl">🧠</span>
+    Agent Response
+  </div>
+</AccordionTrigger>
+
+
+
+                <AccordionContent className="bg-slate-100 px-6 py-5 text-slate-900 rounded-b-2xl">
+                  <div className="mb-2">
+                    <span className="font-bold">User Prompt:</span> {prompt}
+                  </div>
+                  {loading ? (
+                    <div className="flex items-center gap-2 text-sm text-slate-600">
+                      <Loader2 className="animate-spin w-4 h-4" />
+                      Loading response...
+                    </div>
+                  ) : (
+                    <div className="mt-2">
+                      <span className="font-bold">Output:</span> {output}
+                    </div>
+                  )}
+                </AccordionContent>
               </div>
-              {loading ? (
-                <div style={{ marginTop: '10px' }}>Loading response...</div>
-              ) : (
-                <div style={{ marginTop: '10px' }}>
-                  <strong>Output:</strong> {output}
-                </div>
-              )}
-            </div>
-          )}
+            </AccordionItem>
+          </Accordion>
         </div>
       )}
     </div>
-  );
+  )
 }
 
-export default App;
+export default App
