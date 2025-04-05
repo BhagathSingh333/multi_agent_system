@@ -61,15 +61,15 @@ function App() {
           <Accordion type="single" collapsible>
             <AccordionItem value="item-1">
               <div className="rounded-2xl shadow-xl border border-slate-200 bg-white">
-              <AccordionTrigger
-  className="flex items-center justify-between w-full px-6 py-4 bg-white text-slate-800 text-lg font-semibold rounded-t-2xl cursor-pointer"
-  style={{ textDecoration: "none" }}
->
-  <div className="flex items-center gap-2">
-    <span className="text-2xl">🧠</span>
-    Agent Response
-  </div>
-</AccordionTrigger>
+                <AccordionTrigger
+                  className="flex items-center justify-between w-full px-6 py-4 bg-white text-slate-800 text-lg font-semibold rounded-t-2xl cursor-pointer"
+                  style={{ textDecoration: "none" }}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-2xl">🧠</span>
+                    Agent Response
+                  </div>
+                </AccordionTrigger>
 
 
 
