@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, useRef, useEffect } from "react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import {
@@ -15,21 +15,49 @@ function App() {
   const [output, setOutput] = useState("")
   const [loading, setLoading] = useState(false)
   const [showAccordion, setShowAccordion] = useState(false)
+  const socketRef = useRef(null)
+
+  // WebSocket setup
+  useEffect(() => {
+    socketRef.current = new WebSocket("ws://localhost:8000/ws") // change this URL as needed
+
+    socketRef.current.onopen = () => {
+      console.log("✅ WebSocket connected")
+    }
+
+    socketRef.current.onmessage = (event) => {
+      setOutput(prev => prev + event.data)
+      setLoading(false)
+    }
+
+    socketRef.current.onerror = (error) => {
+      console.error("WebSocket error:", error)
+      setLoading(false)
+    }
+
+    socketRef.current.onclose = () => {
+      console.log("❌ WebSocket disconnected")
+    }
+
+    return () => socketRef.current?.close()
+  }, [])
 
   const handleSubmit = (e) => {
     e.preventDefault()
     setShowAccordion(true)
+    setOutput("")
     setLoading(true)
 
-    setTimeout(() => {
-      setOutput(`Dummy output for: "${prompt}"`)
+    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      socketRef.current.send(prompt)
+    } else {
+      console.error("WebSocket is not open.")
       setLoading(false)
-    }, 2000)
+    }
   }
 
   return (
     <div className="min-h-screen w-full bg-gradient-to-br from-pink-50 via-sky-100 to-purple-100 p-6 flex flex-col items-center gap-10">
-      {/* Header / Prompt Card */}
       <Card className="w-full max-w-2xl backdrop-blur-md bg-white/80 border border-white/40 shadow-2xl rounded-2xl hover:shadow-purple-200 transition-shadow">
         <CardHeader>
           <CardTitle className="text-3xl font-bold text-indigo-800 flex items-center gap-2">
@@ -55,7 +83,6 @@ function App() {
         </CardContent>
       </Card>
 
-      {/* Agent Response */}
       {showAccordion && (
         <div className="w-full max-w-2xl">
           <Accordion type="single" collapsible>
@@ -71,8 +98,6 @@ function App() {
                   </div>
                 </AccordionTrigger>
 
-
-
                 <AccordionContent className="bg-slate-100 px-6 py-5 text-slate-900 rounded-b-2xl">
                   <div className="mb-2">
                     <span className="font-bold">User Prompt:</span> {prompt}
@@ -80,7 +105,7 @@ function App() {
                   {loading ? (
                     <div className="flex items-center gap-2 text-sm text-slate-600">
                       <Loader2 className="animate-spin w-4 h-4" />
-                      Loading response...
+                      Waiting for agent response...
                     </div>
                   ) : (
                     <div className="mt-2">
