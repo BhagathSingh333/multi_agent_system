@@ -9,8 +9,10 @@ import {
 } from "@/components/ui/accordion"
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
 import { Loader2 } from "lucide-react"
+import ReactMarkdown from 'react-markdown';
 import AgentVisualization from "./components/AgentVisualization"
 import SequentialTreeVisualization from './components/SequentialTreeVisualization'
+import MockWebSocket from "./MockSocket"
 
 function App() {
   const [prompt, setPrompt] = useState("");
@@ -45,9 +47,9 @@ function App() {
     };
 
     socketRef.current.onmessage = (event) => {
-      const newText = event.data;
-      setOutput(prev => prev + newText);
-      setLoading(false);
+        const newText = event.data;
+        setOutput(prev => prev + newText);
+        setLoading(false);
     };
 
     socketRef.current.onerror = (error) => {
@@ -120,11 +122,11 @@ function App() {
   // Add a new agent interaction to the state
   const addAgentInteraction = (source, target, message, thoughtProcess) => {
     setAgentInteractions(prev => [...prev, {
-      source,
-      target,
-      message,
+        source,
+        target,
+        message,
       thoughtProcess,
-      timestamp: new Date().getTime()
+        timestamp: new Date().getTime()
     }]);
   };
 
@@ -233,14 +235,14 @@ function App() {
                       <div className="bg-white rounded-xl border border-slate-200 shadow-sm">
                         <AgentVisualization interactions={agentInteractions} />
                       </div>
-                      <div className="mt-3 flex justify-center">
-                        <button
-                          className="px-4 py-2 bg-indigo-600 text-white rounded-md shadow-sm hover:bg-indigo-700 transition-colors"
-                          onClick={() => handleViewDeepAnalysis()}
-                        >
-                          View In-depth Agent Analysis
-                        </button>
-                      </div>
+                        <div className="mt-3 flex justify-center">
+                          <button
+                            className="px-4 py-2 bg-indigo-600 text-white rounded-md shadow-sm hover:bg-indigo-700 transition-colors"
+                            onClick={() => handleViewDeepAnalysis()}
+                          >
+                            View In-depth Agent Analysis
+                          </button>
+                        </div>
                     </div>
                   )}
 
@@ -254,8 +256,8 @@ function App() {
                         Waiting for agent response...
                       </div>
                     ) : (
-                      <div className="whitespace-pre-wrap bg-white p-4 rounded-xl border border-slate-200">
-                        {output}
+                      <div className="prose max-w-none bg-white p-4 rounded-xl border border-slate-200">
+                        <ReactMarkdown>{output}</ReactMarkdown>
                       </div>
                     )}
                   </div>
