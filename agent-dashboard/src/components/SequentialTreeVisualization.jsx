@@ -1,8 +1,10 @@
 // components/SequentialTreeVisualization.jsx
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
-const SequentialTreeVisualization = ({ interactions }) => {
+const SequentialTreeVisualization = ({ interactions, onThoughtProcessSelect }) => {
   const svgRef = useRef(null);
+  const containerRef = useRef(null);
+  const [dimensions, setDimensions] = useState({ width: 800, height: 0 });
   
   // Define agent colors - same as in your original visualization
   const agentColors = {
@@ -14,6 +16,24 @@ const SequentialTreeVisualization = ({ interactions }) => {
   };
   
   useEffect(() => {
+    // Update dimensions when container size changes
+    const updateDimensions = () => {
+      if (containerRef.current) {
+        const { width } = containerRef.current.getBoundingClientRect();
+        setDimensions({
+          width: width - 40, // Account for padding
+          height: 0 // Will be calculated based on node positions
+        });
+      }
+    };
+    
+    window.addEventListener('resize', updateDimensions);
+    updateDimensions();
+    
+    return () => window.removeEventListener('resize', updateDimensions);
+  }, [interactions]);
+  
+  useEffect(() => {
     if (!interactions.length || !svgRef.current) return;
     
     // Clear previous content
@@ -21,13 +41,7 @@ const SequentialTreeVisualization = ({ interactions }) => {
       svgRef.current.removeChild(svgRef.current.firstChild);
     }
     
-    const width = 800;
-    const height = 800;
-    
-    // Set SVG dimensions
-    svgRef.current.setAttribute('width', width);
-    svgRef.current.setAttribute('height', height);
-    svgRef.current.setAttribute('viewBox', `0 0 ${width} ${height}`);
+    const { width } = dimensions;
     
     // Create a sequential tree structure
     const nodesByLevel = {}; // Dictionary where key is level, value is array of nodes at that level
@@ -41,7 +55,8 @@ const SequentialTreeVisualization = ({ interactions }) => {
       id: `${firstSource}-0`,
       name: firstSource,
       level: 0,
-      index: 0
+      index: 0,
+      thoughtProcess: interactions[0].thoughtProcess || "No thought process recorded for this agent."
     };
     
     nodesByLevel[0] = [firstNode];
@@ -50,7 +65,7 @@ const SequentialTreeVisualization = ({ interactions }) => {
     
     // Process each interaction to build the tree
     interactions.forEach((interaction, interactionIndex) => {
-      const { source, target } = interaction;
+      const { source, target, thoughtProcess } = interaction;
       
       // Find the latest occurrence of the source agent
       let sourceNode = null;
@@ -72,7 +87,8 @@ const SequentialTreeVisualization = ({ interactions }) => {
         id: `${target}-${interactionIndex + 1}`,
         name: target,
         level: targetLevel,
-        index: nodesByLevel[targetLevel] ? nodesByLevel[targetLevel].length : 0
+        index: nodesByLevel[targetLevel] ? nodesByLevel[targetLevel].length : 0,
+        thoughtProcess: interaction.targetThoughtProcess || "No thought process recorded for this agent."
       };
       
       // Add the target node to the appropriate level
@@ -93,8 +109,8 @@ const SequentialTreeVisualization = ({ interactions }) => {
     
     // Calculate node positions
     const levelHeight = 120;
-    const maxNodesInLevel = Math.max(...Object.values(nodesByLevel).map(level => level.length));
     const levelWidth = width - 100;
+    let maxY = 0;
     
     // Position nodes
     Object.entries(nodesByLevel).forEach(([level, levelNodes]) => {
@@ -103,8 +119,17 @@ const SequentialTreeVisualization = ({ interactions }) => {
       levelNodes.forEach((node, index) => {
         node.x = 50 + ((index + 1) * nodeSpacing);
         node.y = 80 + (parseInt(level) * levelHeight);
+        maxY = Math.max(maxY, node.y);
       });
     });
+    
+    // Set the SVG height based on the deepest node plus padding
+    const height = maxY + 120; // Add padding for the last node
+    
+    // Set SVG dimensions
+    svgRef.current.setAttribute('width', width);
+    svgRef.current.setAttribute('height', height);
+    svgRef.current.setAttribute('viewBox', `0 0 ${width} ${height}`);
     
     // Draw all connections
     edges.forEach(edge => {
@@ -151,13 +176,22 @@ const SequentialTreeVisualization = ({ interactions }) => {
     
     // Draw all nodes
     nodes.forEach(node => {
+      // Create node group for click handling
+      const nodeGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      nodeGroup.setAttribute('cursor', 'pointer');
+      nodeGroup.addEventListener('click', () => {
+        if (onThoughtProcessSelect) {
+          onThoughtProcessSelect(node);
+        }
+      });
+      
       // Create node circle
       const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
       circle.setAttribute('cx', node.x);
       circle.setAttribute('cy', node.y);
       circle.setAttribute('r', 40);
       circle.setAttribute('fill', agentColors[node.name] || '#6366F1');
-      svgRef.current.appendChild(circle);
+      nodeGroup.appendChild(circle);
       
       // Add agent name inside the circle
       const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
@@ -169,14 +203,36 @@ const SequentialTreeVisualization = ({ interactions }) => {
       text.setAttribute('font-size', '12');
       text.setAttribute('font-weight', 'bold');
       text.textContent = node.name;
-      svgRef.current.appendChild(text);
+      nodeGroup.appendChild(text);
+      
+      // Add a hint that the node is clickable
+      const clickHint = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      clickHint.setAttribute('cx', node.x + 30);
+      clickHint.setAttribute('cy', node.y - 30);
+      clickHint.setAttribute('r', 10);
+      clickHint.setAttribute('fill', 'white');
+      clickHint.setAttribute('stroke', agentColors[node.name] || '#6366F1');
+      clickHint.setAttribute('stroke-width', '1.5');
+      nodeGroup.appendChild(clickHint);
+      
+      const clickIcon = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      clickIcon.setAttribute('x', node.x + 30);
+      clickIcon.setAttribute('y', node.y - 30);
+      clickIcon.setAttribute('text-anchor', 'middle');
+      clickIcon.setAttribute('dominant-baseline', 'middle');
+      clickIcon.setAttribute('font-size', '10');
+      clickIcon.setAttribute('font-weight', 'bold');
+      clickIcon.textContent = 'i';
+      nodeGroup.appendChild(clickIcon);
+      
+      svgRef.current.appendChild(nodeGroup);
     });
     
-  }, [interactions]);
+  }, [interactions, dimensions, onThoughtProcessSelect]);
   
   return (
-    <div className="w-full overflow-auto bg-white rounded-xl p-4">
-      <svg ref={svgRef} className="mx-auto"></svg>
+    <div ref={containerRef} className="w-full bg-white rounded-xl p-4">
+      <svg ref={svgRef} className="w-full" style={{ height: 'auto' }}></svg>
     </div>
   );
 };
