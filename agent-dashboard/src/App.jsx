@@ -24,6 +24,8 @@ function App() {
   const [selectedNode, setSelectedNode] = useState(null);
   const [agents, setAgents] = useState({});
   const socketRef = useRef(null);
+  const [runningAgents, setRunningAgents] = useState({});
+
   const conversationStateRef = useRef({
     lastAgent: null,
     activeAgents: {},
@@ -39,7 +41,7 @@ function App() {
     "Soil Information Agent": '#FFA07A',      // Using Critic color
     "Verification Agent": '#F7B801',        // Using Coordinator color
     "Summary Agent": '#8B5CF6',             // New color for Summary Agent
-    
+
     // Frontend friendly names
     "Crop Recommender": '#FF6B6B',
     "Environmental Info": '#45B7D1',
@@ -47,10 +49,10 @@ function App() {
     "Soil Health": '#FFA07A',
     "Verification": '#F7B801',
     "Summary": '#8B5CF6',
-    
+
     // User for the final interaction
     "User": '#6366F1',
-    
+
     // Backend agent abbreviated names as fallback
     CropRecommenderAgent: '#FF6B6B',
     EnvironmentalInfoAgent: '#45B7D1',
@@ -64,11 +66,11 @@ function App() {
   const agentNameMapping = {
     "Crop Recommender Agent": "Crop Recommender",
     "Environmental Information Agent": "Environmental Info",
-    "Marketing Information Agent": "Marketing Info", 
+    "Marketing Information Agent": "Marketing Info",
     "Soil Information Agent": "Soil Health",
     "Verification Agent": "Verification",
     "Summary Agent": "Summary",
-    
+
     // Also include the backend names for fallback
     CropRecommenderAgent: "Crop Recommender",
     EnvironmentalInfoAgent: "Environmental Info",
@@ -91,7 +93,7 @@ function App() {
       try {
         const data = JSON.parse(event.data);
         console.log("Received websocket data:", data);
-        
+
         handleWebSocketMessage(data);
       } catch (error) {
         console.error("Error parsing WebSocket message:", error);
@@ -133,31 +135,46 @@ function App() {
         // Handle agents reset (ignore as it's just for state resetting)
         console.log("Agents reset received");
         break;
-        
+
       case "agent_status_update":
         // Process agent status updates
         if (data.agent) {
           const { agent } = data;
           const agentName = agent.name;
           const friendlyName = agentNameMapping[agentName] || agentName;
-          
+
           // Update output with agent status
           if (agent.status && agent.status !== "idle") {
             setOutput(prev => `${prev}\nAgent ${friendlyName}: ${agent.status}\n`);
           }
-          
+
+          if (agent.status.startsWith("Started")) {
+            // Mark agent as running
+            setRunningAgents(prev => ({
+              ...prev,
+              [friendlyName]: true
+            }));
+          }
+          else if (agent.status === "Completed task") {
+            // Mark agent as no longer running
+            setRunningAgents(prev => ({
+              ...prev,
+              [friendlyName]: false
+            }));
+          }
+
           // Store previous state to detect changes
           const previousAgent = agents[agentName];
-          
+
           // Create interactions when next_agent changes
           if (agent.next_agent && agent.next_agent.length > 0) {
             // Only create interactions if this is a new update with next_agent
-            const isNewInteraction = 
-              !previousAgent || 
-              !previousAgent.next_agent || 
+            const isNewInteraction =
+              !previousAgent ||
+              !previousAgent.next_agent ||
               previousAgent.next_agent.length === 0 ||
               JSON.stringify(previousAgent.next_agent) !== JSON.stringify(agent.next_agent);
-              
+
             if (isNewInteraction) {
               agent.next_agent.forEach(nextAgent => {
                 // Format a simplified thought process from the log if available
@@ -165,13 +182,13 @@ function App() {
                 if (agent.log) {
                   try {
                     const logObj = JSON.parse(agent.log);
-                    thoughtProcess = logObj.thinking || 
-                                    "This agent has completed its analysis and is passing data to the next agent.";
+                    thoughtProcess = logObj.thinking ||
+                      "This agent has completed its analysis and is passing data to the next agent.";
                   } catch (e) {
                     thoughtProcess = agent.log.substring(0, 200) + "...";
                   }
                 }
-                
+
                 addAgentInteraction(
                   agentName,
                   nextAgent,
@@ -181,7 +198,7 @@ function App() {
               });
             }
           }
-          
+
           // Update agents state
           setAgents(prev => ({
             ...prev,
@@ -197,17 +214,17 @@ function App() {
           const activeAgents = Object.entries(agents)
             .filter(([_, agent]) => agent.status !== 'idle' && agent.status !== 'error')
             .map(([name]) => name);
-            
+
           if (activeAgents.length > 0) {
             const lastAgent = activeAgents[activeAgents.length - 1];
             addAgentInteraction(
-              lastAgent, 
-              "User", 
+              lastAgent,
+              "User",
               "Final report completed",
               "The workflow has completed successfully and produced a final report."
             );
           }
-          
+
           setOutput(prev => `${prev}\n\nFinal Report:\n${data.result}`);
           setLoading(false);
         }
@@ -242,15 +259,15 @@ function App() {
     // Map backend agent names to frontend names if needed
     const sourceName = agentNameMapping[source] || source;
     const targetName = agentNameMapping[target] || target;
-    
+
     // Don't add duplicate interactions
     const isDuplicate = agentInteractions.some(
-      interaction => 
-        interaction.source === sourceName && 
-        interaction.target === targetName && 
+      interaction =>
+        interaction.source === sourceName &&
+        interaction.target === targetName &&
         interaction.message === message
     );
-    
+
     if (!isDuplicate) {
       setAgentInteractions(prev => [...prev, {
         source: sourceName,
@@ -347,7 +364,8 @@ function App() {
                     <div className="mb-6">
                       <h3 className="text-lg font-semibold mb-4 text-indigo-800">Agent Interactions</h3>
                       <div className="bg-white rounded-xl border border-slate-200 shadow-sm">
-                        <AgentVisualization interactions={agentInteractions} agentColors={agentColors}/>
+                        <AgentVisualization interactions={agentInteractions} agentColors={agentColors} runningAgents={runningAgents}
+                        />
                       </div>
                       <div className="mt-3 flex justify-center">
                         <button
@@ -375,7 +393,7 @@ function App() {
                       </div>
                     )}
                   </div>
-                  
+
                   {/* Uncomment to add debug helper if needed */}
                   {/* <DebugHelper agents={agents} showRawData={true} /> */}
                 </AccordionContent>
