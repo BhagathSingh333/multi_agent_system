@@ -8,15 +8,7 @@ const SequentialTreeVisualization = ({ interactions, onThoughtProcessSelect, age
 
   // Use provided agent colors or fallback to defaults
   const getAgentColor = (agentName) => {
-    return agentColors?.[agentName] || {
-      Planner: '#FF6B6B',
-      Executor: '#4ECDC4',
-      Researcher: '#45B7D1',
-      Critic: '#FFA07A',
-      Coordinator: '#F7B801',
-      Verification: '#8B5CF6',
-      Summary: '#EC4899',
-    }[agentName] || '#6366F1';
+    return agentColors?.[agentName] || '#6366F1';
   };
 
   useEffect(() => {
@@ -91,17 +83,17 @@ const SequentialTreeVisualization = ({ interactions, onThoughtProcessSelect, age
       const targetLevel = sourceNode.level + 1;
 
       // Check if a node with this name already exists at this level
-      const existingNodeKey = `${targetLevel}-${target}`;
+      const existingNodeKey = `${targetLevel}-${target}-${interactionIndex}`;
       let targetNode = nodesByNameAndLevel[existingNodeKey];
 
       if (!targetNode) {
         // Create a new target node if one doesn't exist at this level
         targetNode = {
-          id: `${target}-${targetLevel}`,
+          id: `${target}-${targetLevel}-${interactionIndex}`,
           name: target,
           level: targetLevel,
           index: nodesByLevel[targetLevel] ? nodesByLevel[targetLevel].length : 0,
-          thoughtProcess: interaction.thoughtProcess || "No thought process recorded for this agent."
+          thoughtProcess: thoughtProcess || "No thought process recorded for this agent."
         };
 
         // Add the target node to the appropriate level
@@ -112,11 +104,6 @@ const SequentialTreeVisualization = ({ interactions, onThoughtProcessSelect, age
         nodes.push(targetNode);
         nodeMap[targetNode.id] = targetNode;
         nodesByNameAndLevel[existingNodeKey] = targetNode;
-      } else {
-        // Merge thought processes if we're reusing a node
-        if (interaction.thoughtProcess) {
-          targetNode.thoughtProcess += "\n\n" + interaction.thoughtProcess;
-        }
       }
 
       // Add edge between source and target
@@ -211,25 +198,24 @@ const SequentialTreeVisualization = ({ interactions, onThoughtProcessSelect, age
       ellipse.setAttribute('cy', node.y);
       ellipse.setAttribute('rx', 80); // Horizontal radius
       ellipse.setAttribute('ry', 40); // Vertical radius
-      ellipse.setAttribute('fill', getAgentColor(node.name) || '#6366F1');
+      ellipse.setAttribute('fill', getAgentColor(node.name));
       nodeGroup.appendChild(ellipse);
 
-
-      // Add agent name inside the circle
+      // Add agent name inside the ellipse
       const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
       text.setAttribute('x', node.x);
       text.setAttribute('y', node.y);
       text.setAttribute('text-anchor', 'middle');
       text.setAttribute('dominant-baseline', 'middle');
       text.setAttribute('fill', 'white');
-      text.setAttribute('font-size', '12');
+      text.setAttribute('font-size', '14');
       text.setAttribute('font-weight', 'bold');
       text.textContent = node.name;
       nodeGroup.appendChild(text);
 
       // Add a hint that the node is clickable
       const clickHint = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-      clickHint.setAttribute('cx', node.x + 30);
+      clickHint.setAttribute('cx', node.x + 70);
       clickHint.setAttribute('cy', node.y - 30);
       clickHint.setAttribute('r', 10);
       clickHint.setAttribute('fill', 'white');
@@ -238,7 +224,7 @@ const SequentialTreeVisualization = ({ interactions, onThoughtProcessSelect, age
       nodeGroup.appendChild(clickHint);
 
       const clickIcon = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-      clickIcon.setAttribute('x', node.x + 30);
+      clickIcon.setAttribute('x', node.x + 70);
       clickIcon.setAttribute('y', node.y - 30);
       clickIcon.setAttribute('text-anchor', 'middle');
       clickIcon.setAttribute('dominant-baseline', 'middle');

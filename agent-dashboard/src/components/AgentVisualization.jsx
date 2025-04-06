@@ -443,21 +443,6 @@ const AgentVisualization = ({ interactions, agentColors, runningAgents, onEdgeCl
           )}
         </div>
       ))}
-
-
-
-      {/* Legend for sequence numbers */}
-      <div className="absolute bottom-2 right-2 bg-white/90 p-2 rounded-lg shadow-sm border border-slate-200 text-xs">
-        <div className="font-semibold text-slate-700 mb-1">Communication Sequence</div>
-        <div className="flex items-center">
-          <div className="w-5 h-5 rounded-full bg-indigo-500 flex items-center justify-center text-white text-xs mr-2">1</div>
-          <span>First interaction</span>
-        </div>
-        <div className="flex items-center mt-1">
-          <div className="w-5 h-5 rounded-full bg-white border border-indigo-500 flex items-center justify-center text-indigo-500 text-xs mr-2">{interactions.length}</div>
-          <span>Latest interaction</span>
-        </div>
-      </div>
     </div>
   )
 }

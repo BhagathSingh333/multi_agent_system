@@ -136,77 +136,104 @@ function App() {
         console.log("Agents reset received");
         break;
 
-      case "agent_status_update":
-        // Process agent status updates
-        if (data.agent) {
-          const { agent } = data;
-          const agentName = agent.name;
-          const friendlyName = agentNameMapping[agentName] || agentName;
-
-          // Update output with agent status
-          if (agent.status && agent.status !== "idle") {
-            setOutput(prev => `${prev}\nAgent ${friendlyName}: ${agent.status}\n`);
-          }
-
-          if (agent.status.startsWith("Started")) {
-            // Mark agent as running
-            setRunningAgents(prev => ({
-              ...prev,
-              [friendlyName]: true
-            }));
-          }
-          else if (agent.status === "Completed task") {
-            // Mark agent as no longer running
-            setRunningAgents(prev => ({
-              ...prev,
-              [friendlyName]: false
-            }));
-          }
-
-          // Store previous state to detect changes
-          const previousAgent = agents[agentName];
-
-          // Create interactions when next_agent changes
-          if (agent.next_agent && agent.next_agent.length > 0) {
-            // Only create interactions if this is a new update with next_agent
-            const isNewInteraction =
-              !previousAgent ||
-              !previousAgent.next_agent ||
-              previousAgent.next_agent.length === 0 ||
-              JSON.stringify(previousAgent.next_agent) !== JSON.stringify(agent.next_agent);
-
-            if (isNewInteraction) {
-              agent.next_agent.forEach(nextAgent => {
-                // Format a simplified thought process from the log if available
-                let thoughtProcess = "Processing data...";
-                if (agent.log) {
-                  try {
-                    const logObj = JSON.parse(agent.log);
-                    thoughtProcess = logObj.thinking ||
-                      "This agent has completed its analysis and is passing data to the next agent.";
-                  } catch (e) {
-                    thoughtProcess = agent.log.substring(0, 200) + "...";
+        case "agent_status_update":
+          // Process agent status updates
+          if (data.agent) {
+            const { agent } = data;
+            const agentName = agent.name;
+            const friendlyName = agentNameMapping[agentName] || agentName;
+  
+            // Update output with agent status
+            if (agent.status && agent.status !== "idle") {
+              setOutput(prev => `${prev}\nAgent ${friendlyName}: ${agent.status}\n`);
+            }
+  
+            if (agent.status.startsWith("Started")) {
+              // Mark agent as running
+              setRunningAgents(prev => ({
+                ...prev,
+                [friendlyName]: true
+              }));
+            }
+            else if (agent.status === "Completed task") {
+              // Mark agent as no longer running
+              setRunningAgents(prev => ({
+                ...prev,
+                [friendlyName]: false
+              }));
+              
+              // Extract thought process when agent completes a task
+              let thoughtProcess = "No thought process recorded.";
+              if (agent.log) {
+                try {
+                  const logObj = JSON.parse(agent.log);
+                  thoughtProcess = logObj.thinking || agent.log;
+                } catch (e) {
+                  thoughtProcess = agent.log;
+                }
+              }
+              
+              // Store the thought process for this specific agent instance
+              // Find the most recent interaction where this agent is the source
+              setAgentInteractions(prev => {
+                const updatedInteractions = [...prev];
+                // Find the most recent interaction with this agent as source
+                for (let i = updatedInteractions.length - 1; i >= 0; i--) {
+                  const sourceName = agentNameMapping[agentName] || agentName;
+                  if (updatedInteractions[i].source === sourceName) {
+                    // Update its thought process
+                    updatedInteractions[i].thoughtProcess = thoughtProcess;
+                    break;
                   }
                 }
-
-                addAgentInteraction(
-                  agentName,
-                  nextAgent,
-                  `Sending data to ${agentNameMapping[nextAgent] || nextAgent}`,
-                  thoughtProcess
-                );
+                return updatedInteractions;
               });
             }
+  
+            // Store previous state to detect changes
+            const previousAgent = agents[agentName];
+  
+            // Create interactions when next_agent changes
+            if (agent.next_agent && agent.next_agent.length > 0) {
+              // Only create interactions if this is a new update with next_agent
+              const isNewInteraction =
+                !previousAgent ||
+                !previousAgent.next_agent ||
+                previousAgent.next_agent.length === 0 ||
+                JSON.stringify(previousAgent.next_agent) !== JSON.stringify(agent.next_agent);
+  
+              if (isNewInteraction) {
+                agent.next_agent.forEach(nextAgent => {
+                  // Format a simplified thought process from the log if available
+                  let thoughtProcess = "Processing data...";
+                  if (agent.log) {
+                    try {
+                      const logObj = JSON.parse(agent.log);
+                      thoughtProcess = logObj.thinking ||
+                        "This agent has completed its analysis and is passing data to the next agent.";
+                    } catch (e) {
+                      thoughtProcess = agent.log.substring(0, 200) + "...";
+                    }
+                  }
+  
+                  addAgentInteraction(
+                    agentName,
+                    nextAgent,
+                    `Sending data to ${agentNameMapping[nextAgent] || nextAgent}`,
+                    thoughtProcess
+                  );
+                });
+              }
+            }
+  
+            // Update agents state
+            setAgents(prev => ({
+              ...prev,
+              [agentName]: agent
+            }));
           }
-
-          // Update agents state
-          setAgents(prev => ({
-            ...prev,
-            [agentName]: agent
-          }));
-        }
-        break;
-
+          break;
+  
       case "workflow_completed":
         // Process completed workflow
         if (data.result) {
@@ -426,6 +453,7 @@ function App() {
                 <SequentialTreeVisualization
                   interactions={agentInteractions}
                   onThoughtProcessSelect={setSelectedNode}
+                  agentColors={agentColors}
                 />
               </div>
             </div>
