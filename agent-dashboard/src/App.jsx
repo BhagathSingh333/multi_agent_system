@@ -252,7 +252,7 @@ function App() {
             );
           }
 
-          setOutput(prev => `${prev}\n\nFinal Report:\n${data.result}`);
+          setOutput(`Final Report:\n${data.result}`);
           setLoading(false);
         }
         break;
@@ -338,7 +338,7 @@ function App() {
       <Card className="w-full max-w-2xl backdrop-blur-md bg-white/80 border border-white/40 shadow-2xl rounded-2xl hover:shadow-purple-200 transition-shadow">
         <CardHeader>
           <CardTitle className="text-3xl font-bold text-indigo-800 flex items-center gap-2">
-            <span className="text-4xl">🧠</span> Multi-Agent Crop Planner
+            <span className="text-4xl">🌱</span> Multi-Agent Crop Planner
           </CardTitle>
         </CardHeader>
         <CardContent>
