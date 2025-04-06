@@ -41,6 +41,7 @@ AgroIntelligence:
 | `EnvironmentalInfoAgent` | Checks climate requirements for the recommended crops.                |
 | `MarketingInfoAgent`   | Assesses current demand and market trends.                               |
 | `SoilHealthInfoAgent`  | Analyzes soil quality, nutrients, and pH levels.                         |
+| `VerificationAgent`    | Makes sure that data given by all the domain Agents is complete and resolves conflicts.|
 | `SummaryAgent`         | Synthesizes all results into final recommendation output.                |
  
 ---
