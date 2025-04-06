@@ -1,13 +1,9 @@
-# ---------------------------------------------------------------------------
-# Crop Planner – resilient + verification loop + summarization + WebSockets
-# ---------------------------------------------------------------------------
-# pip install agno openai python‑dotenv duckduckgo‑search pydantic fastapi uvicorn
-# ---------------------------------------------------------------------------
-
 import os, time, json, logging
 from textwrap import dedent
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from datetime import datetime
+import concurrent.futures
+import threading
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
@@ -18,36 +14,25 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.workflow import Workflow, RunResponse, RunEvent
 from agno.utils.log import logger
 
-# Imports for WebSocket API
 import asyncio
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from starlette.concurrency import run_in_threadpool
 import uuid
 
-# ---------------------------------------------------------------------------
-# Base Model for Agent Outputs
-# ---------------------------------------------------------------------------
 class AgentOutput(BaseModel):
-    thinking: str = None
-
-# ---------------------------------------------------------------------------
-# Environment
-# ---------------------------------------------------------------------------
+    thinking: Optional[str] = None
 
 load_dotenv()
 openai_api_key = os.getenv("OPENAI_API_KEY")
 if not openai_api_key:
     raise EnvironmentError("OPENAI_API_KEY not found")
 
-# ---------------------------------------------------------------------------
-# Pydantic Models for Status Updates and Log Updates
-# ---------------------------------------------------------------------------
 class AgentStatusUpdate(BaseModel):
     event: str = "agent_status_update"
-    agent: str  # Agent identifier key (e.g. "CropRecommenderAgent")
+    agent: str
     status: str
-    log: str = None
-    next_agent: List[str] = Field(default_factory=list)  # List of next agents to be called
+    log: Optional[str] = None
+    next_agent: List[str] = Field(default_factory=list)
     timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
 
 class WorkflowMessage(BaseModel):
@@ -64,10 +49,6 @@ class LogUpdate(BaseModel):
     event: str = "log_update"
     log: str
     timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
-
-# ---------------------------------------------------------------------------
-# Pydantic Schemas
-# ---------------------------------------------------------------------------
 
 class CropsList(AgentOutput):
     crops: List[str] = Field(default_factory=list)
@@ -109,155 +90,166 @@ class SoilHealthResponse(AgentOutput):
     soil_health: List[SoilHealthData] = Field(default_factory=list)
     sources: List[str] = Field(default_factory=list)
 
-# ---- Verification Schemas ------------------------------------------------
-
 class VerificationItem(BaseModel):
     crop: str
-    missing_domains: List[str]  # e.g. ["environmental", "marketing", "soil_health"]
+    missing_domains: List[str]
 
 class VerificationResponse(AgentOutput):
     missing_info: List[VerificationItem] = Field(default_factory=list)
 
-# ---- Summarization Schema -------------------------------------------------
-
 class SummaryReport(AgentOutput):
     report: str = Field(..., description="A detailed summary report including recommendations and rationale with clean markdown format.")
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def make_chat(max_tokens: int = 3000):
+def make_chat(max_tokens: int = 2000):
     return OpenAIChat(id="gpt-4o", api_key=openai_api_key, max_tokens=max_tokens)
 
 def thinking_prompt(original: str) -> str:
-    """Prepends the 'thinking' requirement to an instruction string."""
     return dedent(
         "1. For the following tasks, store your reasoning in a variable named "
         "`thinking`. Return `thinking` at the beginning of your response as JSON format.\n"
     ) + original
 
-# ---------------------------------------------------------------------------
-# Agents  (detailed instructions remain unchanged)
-# ---------------------------------------------------------------------------
-
 crop_recommender_agent = Agent(
-    model=make_chat(1500),
+    model=make_chat(1000),
     tools=[DuckDuckGoTools()],
     description="You are **CropRecommenderAgent**.",
     instructions=thinking_prompt(
         """2. Search DuckDuckGo for agronomic guidance for the region.
-           3. Return 5‑10 suitable crops with sources in `CropsList` format."""
+           3. Return 5-7 suitable crops with sources in `CropsList` format.
+           Be concise and direct. Focus on the most common crops for the region."""
     ),
     response_model=CropsList,
     structured_outputs=True,
 )
 
 environmental_info_agent = Agent(
-    model=make_chat(),
+    model=make_chat(1000),
     tools=[DuckDuckGoTools()],
     description="You are **EnvironmentalInfoAgent**.",
     instructions=thinking_prompt(
         """Input: a location followed by a comma‑separated crop list.
            For each crop provide:
-             • climate_suitability
-             • rainfall
+             • climate_suitability (brief)
+             • rainfall (brief)
              • temperature_min / _max / _optimal (°C)
-             • additional_info
-           Return JSON matching the `EnvironmentalResponse` schema with sources."""
+             • additional_info (keep brief)
+           Return JSON matching the `EnvironmentalResponse` schema with sources.
+           Be concise and focus only on essential information."""
     ),
     response_model=EnvironmentalResponse,
     structured_outputs=True,
 )
 
 marketing_info_agent = Agent(
-    model=make_chat(),
+    model=make_chat(1000),
     tools=[DuckDuckGoTools()],
     description="You are **MarketingInfoAgent**.",
     instructions=thinking_prompt(
         """Input: location + crop list.
-           For each crop summarise:
+           For each crop summarise briefly:
              • pricing_trends   • demand_forecast
              • distribution_channels   • economic_viability
-           Return JSON in `MarketingResponse` format with sources."""
+           Return JSON in `MarketingResponse` format with sources.
+           Keep responses concise and to the point."""
     ),
     response_model=MarketingResponse,
     structured_outputs=True,
 )
 
 soil_health_info_agent = Agent(
-    model=make_chat(),
+    model=make_chat(1000),
     tools=[DuckDuckGoTools()],
     description="You are **SoilHealthInfoAgent**.",
     instructions=thinking_prompt(
         """Input: location + crop list.
            For each crop return soil_ph, nutrient_levels, water_retention,
-           organic_matter and additional_info in `SoilHealthResponse` format."""
+           organic_matter and additional_info in `SoilHealthResponse` format.
+           Provide brief, direct responses focused on essential information."""
     ),
     response_model=SoilHealthResponse,
     structured_outputs=True,
 )
 
 verification_agent = Agent(
-    model=make_chat(1200),
+    model=make_chat(800),
     description="You are **VerificationAgent**.",
     instructions=thinking_prompt(
         """You receive a JSON object for ONE crop with three keys:
            `environmental`, `marketing`, `soil_health`.
            Any field that is empty, missing or has the literal string "N/A"
            means that domain is incomplete for this crop.
-           Return JSON that matches the `VerificationResponse` schema, e.g.:
-           {
-             "missing_info": [
-               { "crop": "Wheat",
-                 "missing_domains": ["marketing"] }
-             ]
-           }"""
+           Return JSON that matches the `VerificationResponse` schema.
+           Be efficient and only identify truly missing information."""
     ),
     response_model=VerificationResponse,
     structured_outputs=True,
 )
 
-# --- New summarization agent -----------------------------------------------
-
 summary_agent = Agent(
-    model=make_chat(1800),
+    model=make_chat(1500),
     tools=[DuckDuckGoTools()],
     description="You are **SummaryAgent**.",
     instructions=thinking_prompt(
         """Input: You receive the final structured data for a location along with the aggregated information for each crop.
-           Your task is to produce a detailed summary report that:
-           1. Reviews the environmental, marketing, and soil‑health information for each crop.
-           2. Identifies the best crops to grow in the region along with valid reasons for each choice.
-           3. Provides actionable suggestions to farmers about crop selection and cultivation practices based on the data.
-           4. The report should be well-structured and formatted for easy reading.
-           5. Your response should be a detailed report in Markdown format."""
+           Your task is to produce a concise summary report that:
+           1. Briefly reviews key environmental, marketing, and soil‑health information.
+           2. Identifies the 3-4 best crops to grow in the region with brief reasons.
+           3. Provides 2-3 actionable suggestions for farmers.
+           4. Format the report in Markdown for readability.
+           Keep the report focused and under 800 words."""
     ),
     response_model=SummaryReport,
     structured_outputs=True,
 )
 
-# ---------------------------------------------------------------------------
-# Workflow
-# ---------------------------------------------------------------------------
-
 class CropPlannerWorkflow(Workflow):
     description = (
-        "Recommend crops, gather data from three domain agents, run a "
-        "verification pass, and then repeatedly refill missing data until "
-        "all fields are complete (or until 3 retries). If some information is still "
-        "missing, fill it with a default message stating that the information may not be open source "
-        "and may be behind paid sources. Finally, summarize the results with recommendations for farmers."
+        "Recommend crops, gather data from three domain agents, verify information, "
+        "and summarize results with recommendations for farmers."
     )
-    FALLBACK_MESSAGE = ("The information may not be open source and may be behind paid sources. ")
+    FALLBACK_MESSAGE = ("Information may be behind paid sources. ")
     status_callback: callable = lambda msg: None
 
     def safe_run(self, agent: Agent, prompt: str, empty):
-        """Run an agent; return its .content or a default empty model."""
+        agent_name = agent.description.split()[2].replace("*", "")[:-1]
+        
         try:
-            res = agent.run(prompt)
-            # Send status update via callback if defined
-            agent_name = agent.description.split()[2].replace("*", "")[:-1]
+            # self.status_callback(
+            #     AgentStatusUpdate(
+            #         agent=agent_name, 
+            #         status="Processing..."
+            #     ).json()
+            # )
+            
+            result = {"completed": False, "response": None, "error": None}
+            
+            def run_with_timeout():
+                try:
+                    result["response"] = agent.run(prompt)
+                    result["completed"] = True
+                except Exception as e:
+                    result["error"] = e
+                    
+            thread = threading.Thread(target=run_with_timeout)
+            thread.daemon = True
+            thread.start()
+            
+            thread.join(120)
+            
+            if not result["completed"]:
+                logger.warning(f"[CropPlanner] {agent_name} timed out after 120 seconds")
+                self.status_callback(
+                    AgentStatusUpdate(
+                        agent=agent_name, 
+                        status="Timed out after 120 seconds"
+                    ).json()
+                )
+                return empty
+                
+            if result["error"]:
+                raise result["error"]
+                
+            res = result["response"]
             
             self.log_steps.append({
                 "agent": agent_name,
@@ -270,31 +262,27 @@ class CropPlannerWorkflow(Workflow):
 
             return res.content
         except Exception as e:
-            agent_name = agent.description.split()[2].replace("*", "")[:-1]
             logger.warning(f"[CropPlanner] {agent_name} failed: {e}")
             self.log_steps.append({
-                "agent":agent_name, 
-                "ERROR":e
-                })
+                "agent": agent_name, 
+                "ERROR": str(e)
+            })
             
-            # Send error status via callback if defined
             self.status_callback(
                 AgentStatusUpdate(
                     agent=agent_name, 
                     status=f"error: {str(e)[:100]}"
                 ).json()
             )
-                
+            
             return empty
 
     def run(self) -> RunResponse:
-        self.log_steps: List[Dict[str, Any]] = []  # initialize conversation log
+        self.log_steps: List[Dict[str, Any]] = []
 
         location: str | None = getattr(self, "question", None)
         if not location:
             raise ValueError("Set `workflow.question` first")
-
-        # -- 1. crop recommendation ---------------------------------------
         
         self.status_callback(
             AgentStatusUpdate(
@@ -307,6 +295,11 @@ class CropPlannerWorkflow(Workflow):
             crop_recommender_agent, location, CropsList()
         )
         crop_list = crops_data.crops
+        
+        if len(crop_list) > 5:
+            logger.info(f"Limiting crops from {len(crop_list)} to 5 for better performance")
+            crop_list = crop_list[:5]
+            
         self.status_callback(
             AgentStatusUpdate(
                 agent="CropRecommenderAgent", 
@@ -316,10 +309,9 @@ class CropPlannerWorkflow(Workflow):
             ).json()
         )
 
-        # -- 2. initial domain calls --------------------------------------
         env_prompt = f"Location: {location}\nCrops: {', '.join(crop_list)}"
-        from concurrent.futures import ThreadPoolExecutor
-        with ThreadPoolExecutor() as executor:
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
             future_soil = executor.submit(self.safe_run, soil_health_info_agent, env_prompt, SoilHealthResponse())
             future_env = executor.submit(self.safe_run, environmental_info_agent, env_prompt, EnvironmentalResponse())
             future_mkt = executor.submit(self.safe_run, marketing_info_agent, env_prompt, MarketingResponse())
@@ -364,7 +356,6 @@ class CropPlannerWorkflow(Workflow):
         sh_map = {d.crop: d for d in soil_data.soil_health}
         env_map = {d.crop: d for d in env_data.environmental_factors}
         mkt_map = {d.crop: d for d in mkt_data.marketing_factors}
-
 
         max_retries = 3
         retry = 0
@@ -435,6 +426,14 @@ class CropPlannerWorkflow(Workflow):
                     )
                     self.status_callback(
                         AgentStatusUpdate(
+                            agent="VerificationAgent",
+                            status="Started",
+                            log=self.log_steps[-1]['response'],
+                            next_agent=["EnvironmentalInfoAgent"]
+                        ).json()
+                    )
+                    self.status_callback(
+                        AgentStatusUpdate(
                             agent="EnvironmentalInfoAgent", 
                             status="Started: environmental data collection"
                         ).json()
@@ -448,6 +447,14 @@ class CropPlannerWorkflow(Workflow):
                     )
                     self.status_callback(
                         AgentStatusUpdate(
+                            agent="VerificationAgent",
+                            status="Started",
+                            log=self.log_steps[-1]['response'],
+                            next_agent=["MarketingInfoAgent"]
+                        ).json()
+                    )
+                    self.status_callback(
+                        AgentStatusUpdate(
                             agent="MarketingInfoAgent", 
                             status="Started: marketing data collection"
                         ).json()
@@ -458,6 +465,14 @@ class CropPlannerWorkflow(Workflow):
                     soil_prompt_missing = f"Location: {location}\nCrops: {', '.join(missing_soil)}"
                     future_soil = executor.submit(
                         self.safe_run, soil_health_info_agent, soil_prompt_missing, SoilHealthResponse()
+                    )
+                    self.status_callback(
+                        AgentStatusUpdate(
+                            agent="VerificationAgent",
+                            status="Started",
+                            log=self.log_steps[-1]['response'],
+                            next_agent=["SoilHealthInfoAgent"]
+                        ).json()
                     )
                     self.status_callback(
                         AgentStatusUpdate(
@@ -566,57 +581,47 @@ class CropPlannerWorkflow(Workflow):
                 ).json()
             )
 
-        # -- 4. Build per-crop report ---------------------------------------
-        md: List[str] = ["# Crop Planner Detailed Report", ""]
         final_structured: Dict[str, Dict] = {}
         for crop in crop_list:
             env = env_map.get(crop)
             mkt = mkt_map.get(crop)
-            sh  = sh_map.get(crop)
-            md.extend(
-                [
-                    f"## {crop}",
-                    "",
-                    "**Environmental factors:**",
-                    f"- Climate suitability: {getattr(env, 'climate_suitability', 'N/A')}",
-                    f"- Rainfall: {getattr(env, 'rainfall', 'N/A')}",
-                    f"- Temp min/max/optimal (°C): "
-                    f"{getattr(env, 'temperature_min', '–')}/"
-                    f"{getattr(env, 'temperature_max', '–')}/"
-                    f"{getattr(env, 'temperature_optimal', '–')}",
-                    f"- Extra: {getattr(env, 'additional_info', 'N/A')}",
-                    "",
-                    "**Marketing factors:**",
-                    f"- Pricing trends: {getattr(mkt, 'pricing_trends', 'N/A')}",
-                    f"- Demand forecast: {getattr(mkt, 'demand_forecast', 'N/A')}",
-                    f"- Distribution channels: {getattr(mkt, 'distribution_channels', 'N/A')}",
-                    f"- Economic viability: {getattr(mkt, 'economic_viability', 'N/A')}",
-                    "",
-                    "**Soil‑health profile:**",
-                    f"- pH: {getattr(sh, 'soil_ph', 'N/A')}",
-                    f"- Nutrient levels: {getattr(sh, 'nutrient_levels', 'N/A')}",
-                    f"- Water retention: {getattr(sh, 'water_retention', 'N/A')}",
-                    f"- Organic matter: {getattr(sh, 'organic_matter', 'N/A')}",
-                    f"- Extra: {getattr(sh, 'additional_info', 'N/A')}",
-                    "",
-                ]
-            )
-            final_structured[crop] = {
-                "environmental": env.dict() if env else {},
-                "marketing": mkt.dict() if mkt else {},
-                "soil_health": sh.dict() if sh else {},
-            }
+            sh = sh_map.get(crop)
+            
+            try:
+                final_structured[crop] = {
+                    "environmental": env.dict() if env else {},
+                    "marketing": mkt.dict() if mkt else {},
+                    "soil_health": sh.dict() if sh else {},
+                }
+            except Exception as e:
+                logger.error(f"Error building structured data for {crop}: {e}")
+                final_structured[crop] = {
+                    "environmental": {
+                        "crop": crop,
+                        "climate_suitability": getattr(env, "climate_suitability", self.FALLBACK_MESSAGE),
+                        "rainfall": getattr(env, "rainfall", self.FALLBACK_MESSAGE),
+                        "temperature_min": getattr(env, "temperature_min", 0),
+                        "temperature_max": getattr(env, "temperature_max", 0),
+                        "temperature_optimal": getattr(env, "temperature_optimal", 0),
+                        "additional_info": getattr(env, "additional_info", self.FALLBACK_MESSAGE)
+                    },
+                    "marketing": {
+                        "crop": crop,
+                        "pricing_trends": getattr(mkt, "pricing_trends", self.FALLBACK_MESSAGE),
+                        "demand_forecast": getattr(mkt, "demand_forecast", self.FALLBACK_MESSAGE),
+                        "distribution_channels": getattr(mkt, "distribution_channels", self.FALLBACK_MESSAGE),
+                        "economic_viability": getattr(mkt, "economic_viability", self.FALLBACK_MESSAGE)
+                    },
+                    "soil_health": {
+                        "crop": crop,
+                        "soil_ph": getattr(sh, "soil_ph", 0),
+                        "nutrient_levels": getattr(sh, "nutrient_levels", self.FALLBACK_MESSAGE),
+                        "water_retention": getattr(sh, "water_retention", self.FALLBACK_MESSAGE),
+                        "organic_matter": getattr(sh, "organic_matter", self.FALLBACK_MESSAGE),
+                        "additional_info": getattr(sh, "additional_info", self.FALLBACK_MESSAGE)
+                    }
+                }
        
-        # -- 5. Summarize the complete information using SummaryAgent --------
-        self.status_callback(
-                AgentStatusUpdate(
-                    agent="VerificationAgent", 
-                    status="Completed task",
-                    log=self.log_steps[-1]['response'],
-                    next_agent=["SummaryAgent"]
-                ).json()
-                )
-        
         self.status_callback(
             AgentStatusUpdate(
                 agent="SummaryAgent", 
@@ -629,31 +634,16 @@ class CropPlannerWorkflow(Workflow):
             Final structured data:
             {json.dumps(final_structured, indent=2)}
             
-            Based on the above data, produce a detailed summary report that:
-            - Reviews the environmental, marketing, and soil‑health conditions for the region.
-            - Identifies the best crops to grow in {location} and provides reasons for each choice.
-            - Offers actionable suggestions to farmers for improving yields and sustainability.
-            Your response should be a detailed report.
+            Based on the above data, produce a concise summary report that:
+            - Briefly reviews the environmental, marketing, and soil‑health conditions.
+            - Identifies 3-4 best crops to grow in {location} with reasons.
+            - Provides 2-3 actionable suggestions for farmers.
+            Keep the report focused and well-formatted in Markdown.
         """)
+        
         summary_report: SummaryReport = self.safe_run(
             summary_agent, summary_prompt, SummaryReport(report="N/A")
         )
-
-        # -- 6. Append the summary report to the final output ---------------
-        md.extend(
-            [
-                "---",
-                "## Summary Report",
-                "",
-                summary_report.report,
-                "",
-            ]
-        )
-
-        # -- 7. Append conversation log -------------------------------------
-
-        # md.extend(["## Agent Conversation Log", ""])
-        # md.extend([json.dumps(log, indent=2) if isinstance(log, dict) else log for log in self.log_steps])
 
         self.status_callback(
             AgentStatusUpdate(
@@ -671,16 +661,12 @@ class CropPlannerWorkflow(Workflow):
 
         return RunResponse(summary_report.report, RunEvent.workflow_completed)
 
-# ---------------------------------------------------------------------------
-# FastAPI App & WebSocket Endpoint
-# ---------------------------------------------------------------------------
 app = FastAPI()
 
 @app.websocket("/ws")
 async def websocket_crop_planner(websocket: WebSocket):
     await websocket.accept()
    
-    # Set up agent statuses once
     agent_statuses: Dict[str, dict] = {
         "CropRecommenderAgent": {"id": str(uuid.uuid4()), "name": "Crop Recommender Agent", "status": "idle"},
         "EnvironmentalInfoAgent": {"id": str(uuid.uuid4()), "name": "Environmental Information Agent", "status": "idle"},
@@ -690,39 +676,26 @@ async def websocket_crop_planner(websocket: WebSocket):
         "SummaryAgent": {"id": str(uuid.uuid4()), "name": "Summary Agent", "status": "idle"},
     }
    
-    # Get current event loop
     loop = asyncio.get_running_loop()
    
-    # Create log handler once
-    # async def send_log(msg: str):
-    #     await websocket.send_text(msg)
-       
-    # streaming_handler = StreamingLogHandler(send_log, loop)
-    # streaming_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-    # logger.addHandler(streaming_handler)
-   
     try:
-        # Send initial status to client
         initial_status = {"event": "initial_status", "agents": list(agent_statuses.values())}
         await websocket.send_text(json.dumps(initial_status))
        
-        # Continuous loop to handle multiple queries
+        global_workflow = CropPlannerWorkflow(session_id=f"crop-planner-{uuid.uuid4()}", storage=None)
+        
         while True:
-            # Reset agent statuses to idle between queries
             for key in agent_statuses:
                 agent_statuses[key]["status"] = "idle"
            
-            # Send updated status
             await websocket.send_text(json.dumps({
                 "event": "agents_reset",
                 "agents": list(agent_statuses.values())
             }))
            
-            # Wait for the next query
             query = await websocket.receive_text()
             print(f"Received query: {query}")
            
-            # Skip empty queries
             if not query or query.strip() == "":
                 await websocket.send_text(json.dumps({
                     "event": "error",
@@ -730,48 +703,61 @@ async def websocket_crop_planner(websocket: WebSocket):
                 }))
                 continue
                
-            # Define callback for this query
             def send_update(message: str):
-                update_data = json.loads(message)
-                if update_data.get("event") == "agent_status_update":
-                    agent_key = update_data.get("agent")
-                    if agent_key in agent_statuses:
-                        agent_statuses[agent_key]["status"] = update_data.get("status")
-                        agent_statuses[agent_key]["log"] = update_data.get("log")
-                        agent_statuses[agent_key]["next_agent"] = update_data.get("next_agent")
-                        agent_statuses[agent_key]["timestamp"] = update_data.get("timestamp")
+                try:
+                    update_data = json.loads(message)
+                    if update_data.get("event") == "agent_status_update":
+                        agent_key = update_data.get("agent")
+                        if agent_key in agent_statuses:
+                            agent_statuses[agent_key]["status"] = update_data.get("status")
+                            agent_statuses[agent_key]["log"] = update_data.get("log")
+                            agent_statuses[agent_key]["next_agent"] = update_data.get("next_agent", [])
+                            agent_statuses[agent_key]["timestamp"] = update_data.get("timestamp")
+                            asyncio.run_coroutine_threadsafe(
+                                websocket.send_text(json.dumps({
+                                    "event": "agent_status_update",
+                                    "agent": agent_statuses[agent_key]
+                                })),
+                                loop
+                            )
+                    elif update_data.get("event") == "workflow_completed":
                         asyncio.run_coroutine_threadsafe(
                             websocket.send_text(json.dumps({
-                                "event": "agent_status_update",
-                                "agent": agent_statuses[agent_key]
+                                "event": "workflow_completed",
+                                "result": update_data.get("result")
                             })),
                             loop
                         )
-                elif update_data.get("event") == "workflow_completed":
-                    # When workflow is completed, send the final result
-                    asyncio.run_coroutine_threadsafe(
-                        websocket.send_text(json.dumps({
-                            "event": "workflow_completed",
-                            "result": update_data.get("result")
-                        })),
-                        loop
-                    )
-                else:
-                    # Forward other messages directly
-                    asyncio.run_coroutine_threadsafe(
-                        websocket.send_text(message),
-                        loop
-                    )
+                    else:
+                        asyncio.run_coroutine_threadsafe(
+                            websocket.send_text(message),
+                            loop
+                        )
+                except Exception as e:
+                    logger.error(f"Error processing status update: {e}")
            
-            # Notify client that workflow is starting
             wf_msg = WorkflowMessage(message=f"Running Crop Planner workflow for: {query}").json()
             await websocket.send_text(wf_msg)
-            # Initialize and run the workflow
-            wf = CropPlannerWorkflow(session_id=f"crop-planner-{uuid.uuid4()}", storage=None)
-            wf.question = query
-            wf.status_callback = send_update
-            # Run the workflow in a separate thread to avoid blocking the event loop
-            await run_in_threadpool(wf.run)
+            
+            global_workflow.question = query
+            global_workflow.status_callback = send_update
+            
+            try:
+                result_future = run_in_threadpool(global_workflow.run)
+                result = await asyncio.wait_for(result_future, timeout=600)
+            except asyncio.TimeoutError:
+                logger.error("Workflow execution timed out after 10 minutes")
+                await websocket.send_text(json.dumps({
+                    "event": "error",
+                    "message": "Workflow timed out after 10 minutes. Please try a more specific location or fewer crops."
+                }))
+            except Exception as e:
+                logger.error(f"Error running workflow: {str(e)}")
+                await websocket.send_text(json.dumps({
+                    "event": "error",
+                    "message": f"An error occurred while processing your request: {str(e)[:200]}"
+                }))
+                
     except WebSocketDisconnect:
         logger.info("Client disconnected.")
     except Exception as e:
@@ -779,28 +765,7 @@ async def websocket_crop_planner(websocket: WebSocket):
         try:
             await websocket.send_text(json.dumps({
                 "event": "error",
-                "message": f"An error occurred: {str(e)}"
+                "message": f"An error occurred: {str(e)[:200]}"
             }))
         except:
             pass
-# ---------------------------------------------------------------------------
-# CLI example
-# ---------------------------------------------------------------------------
-
-if __name__ == "__main__":
-    import uvicorn
-    
-    # Check if running as script with CLI argument
-    import sys
-    if len(sys.argv) > 1 and sys.argv[1] == "cli":
-        # Run in CLI mode
-        wf = CropPlannerWorkflow(session_id="crop-planner-demo", storage=None)
-        wf.question = "what crops are better in Chicago USA?"
-        result = wf.run()
-        print("\n=== Crop Planner Result ===\n")
-        print(result.content)
-    else:
-        # Run as API server
-        print("Starting Crop Planner WebSocket server...")
-        print("Connect to ws://localhost:8000/ws")
-        uvicorn.run(app, host="0.0.0.0", port=8000)
