@@ -19,6 +19,9 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from starlette.concurrency import run_in_threadpool
 import uuid
 
+# Add MAX_RETRIES constant
+MAX_RETRIES = 3
+
 class AgentOutput(BaseModel):
     thinking: Optional[str] = None
 
@@ -213,84 +216,117 @@ class CropPlannerWorkflow(Workflow):
     def safe_run(self, agent: Agent, prompt: str, empty):
         agent_name = agent.description.split()[2].replace("*", "")[:-1]
         
-        try:
-            self.status_callback(
-                AgentStatusUpdate(
-                    agent=agent_name, 
-                    status="Processing..."
-                ).json()
-            )
-            
-            result = {"completed": False, "response": None, "error": None}
-            
-            def run_with_timeout():
-                try:
-                    result["response"] = agent.run(prompt)
-                    result["completed"] = True
-                except Exception as e:
-                    result["error"] = e
-                    
-            thread = threading.Thread(target=run_with_timeout)
-            thread.daemon = True
-            thread.start()
-            
-            thread.join(120)
-            
-            if not result["completed"]:
-                logger.warning(f"[CropPlanner] {agent_name} timed out after 120 seconds")
+        # Implement retry functionality
+        for attempt in range(MAX_RETRIES):
+            try:
                 self.status_callback(
                     AgentStatusUpdate(
                         agent=agent_name, 
-                        status="Timed out after 120 seconds"
+                        status=f"Processing... (Attempt {attempt+1}/{MAX_RETRIES})"
                     ).json()
                 )
-                return empty
                 
-            if result["error"]:
-                raise result["error"]
+                result = {"completed": False, "response": None, "error": None}
                 
-            res = result["response"]
-            
-            self.log_steps.append({
-                "agent": agent_name,
-                "prompt": prompt,
-                "response": json.dumps(
-                    res.content.dict() if hasattr(res.content, 'dict') else res.content, 
-                    indent=2
+                def run_with_timeout():
+                    try:
+                        result["response"] = agent.run(prompt)
+                        result["completed"] = True
+                    except Exception as e:
+                        result["error"] = e
+                        
+                thread = threading.Thread(target=run_with_timeout)
+                thread.daemon = True
+                thread.start()
+                
+                thread.join(120)
+                
+                if not result["completed"]:
+                    logger.warning(f"[CropPlanner] {agent_name} timed out after 120 seconds")
+                    if attempt < MAX_RETRIES - 1:
+                        self.status_callback(
+                            AgentStatusUpdate(
+                                agent=agent_name, 
+                                status=f"Timed out, retrying... ({attempt+1}/{MAX_RETRIES})"
+                            ).json()
+                        )
+                        time.sleep(2)  # Short delay before retry
+                        continue
+                    else:
+                        self.status_callback(
+                            AgentStatusUpdate(
+                                agent=agent_name, 
+                                status=f"Failed after {MAX_RETRIES} attempts"
+                            ).json()
+                        )
+                        return empty
+                    
+                if result["error"]:
+                    if attempt < MAX_RETRIES - 1:
+                        logger.warning(f"[CropPlanner] {agent_name} failed, retrying: {result['error']}")
+                        self.status_callback(
+                            AgentStatusUpdate(
+                                agent=agent_name, 
+                                status=f"Error, retrying... ({attempt+1}/{MAX_RETRIES})"
+                            ).json()
+                        )
+                        time.sleep(2)  # Short delay before retry
+                        continue
+                    else:
+                        raise result["error"]
+                    
+                res = result["response"]
+                
+                self.log_steps.append({
+                    "agent": agent_name,
+                    "prompt": prompt,
+                    "response": json.dumps(
+                        res.content.dict() if hasattr(res.content, 'dict') else res.content, 
+                        indent=2
+                    )
+                })
+                
+                # Determine next_agent based on current agent
+                next_agent = []
+                if agent_name in ["EnvironmentalInfoAgent", "MarketingInfoAgent", "SoilHealthInfoAgent"]:
+                    next_agent = ["VerificationAgent"]
+                
+                self.status_callback(
+                    AgentStatusUpdate(
+                        agent=agent_name, 
+                        status="Completed task",
+                        log=self.log_steps[-1]['response'],
+                        next_agent=next_agent
+                    ).json()
                 )
-            })
-            
-            # Determine next_agent based on current agent
-            next_agent = []
-            if agent_name in ["EnvironmentalInfoAgent", "MarketingInfoAgent", "SoilHealthInfoAgent"]:
-                next_agent = ["VerificationAgent"]
-            
-            self.status_callback(
-                AgentStatusUpdate(
-                    agent=agent_name, 
-                    status="Completed task",
-                    log=self.log_steps[-1]['response'],
-                    next_agent=next_agent
-                ).json()
-            )
-            
-            return res.content
-            
-        except Exception as e:
-            logger.warning(f"[CropPlanner] {agent_name} failed: {e}")
-            self.log_steps.append({
-                "agent": agent_name, 
-                "ERROR": str(e)
-            })
-            
-            self.status_callback(
-                AgentStatusUpdate(
-                    agent=agent_name, 
-                    status=f"error: {str(e)[:100]}"
-                ).json()
-            )
-            
-            return empty
+                
+                return res.content
+                
+            except Exception as e:
+                if attempt < MAX_RETRIES - 1:
+                    logger.warning(f"[CropPlanner] {agent_name} failed, retrying: {e}")
+                    self.status_callback(
+                        AgentStatusUpdate(
+                            agent=agent_name, 
+                            status=f"Error, retrying... ({attempt+1}/{MAX_RETRIES})"
+                        ).json()
+                    )
+                    time.sleep(2)  # Short delay before retry
+                else:
+                    logger.warning(f"[CropPlanner] {agent_name} failed after {MAX_RETRIES} attempts: {e}")
+                    self.log_steps.append({
+                        "agent": agent_name, 
+                        "ERROR": str(e)
+                    })
+                    
+                    self.status_callback(
+                        AgentStatusUpdate(
+                            agent=agent_name, 
+                            status=f"error: {str(e)[:100]}"
+                        ).json()
+                    )
+                    
+                    return empty
 
     def run(self) -> RunResponse:
         self.log_steps: List[Dict[str, Any]] = []
@@ -569,8 +605,6 @@ async def websocket_crop_planner(websocket: WebSocket):
         initial_status = {"event": "initial_status", "agents": list(agent_statuses.values())}
         await websocket.send_text(json.dumps(initial_status))
        
-        global_workflow = CropPlannerWorkflow(session_id=f"crop-planner-{uuid.uuid4()}", storage=None)
-        
         while True:
             for key in agent_statuses:
                 agent_statuses[key]["status"] = "idle"
@@ -590,6 +624,9 @@ async def websocket_crop_planner(websocket: WebSocket):
                 }))
                 continue
                
+            # Create a new workflow instance for each query
+            global_workflow = CropPlannerWorkflow(session_id=f"crop-planner-{uuid.uuid4()}", storage=None)
+            
             def send_update(message: str):
                 try:
                     update_data = json.loads(message)
