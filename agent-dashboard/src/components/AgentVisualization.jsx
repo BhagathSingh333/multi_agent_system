@@ -2,20 +2,50 @@
 import { useRef, useEffect, useState } from 'react'
 import { useSpring, animated } from '@react-spring/web'
 
-const AgentVisualization = ({ interactions, onEdgeClick, highlightedStep }) => {
+const AgentVisualization = ({ interactions, agentColors, onEdgeClick, highlightedStep }) => {
   const [agents, setAgents] = useState({})
   const [connectionPaths, setConnectionPaths] = useState({})
   const [hoveredPath, setHoveredPath] = useState(null)
   const [hoveredNode, setHoveredNode] = useState(null)
   const containerRef = useRef(null)
 
-  // Define agent colors
-  const agentColors = {
-    Planner: '#FF6B6B',
-    Executor: '#4ECDC4',
-    Researcher: '#45B7D1',
-    Critic: '#FFA07A',
-    Coordinator: '#F7B801',
+  // Get color for an agent, using the passed-in agentColors prop or fallback to random
+  const getAgentColor = (agentName) => {
+    return agentColors && agentColors[agentName]
+      ? agentColors[agentName]
+      : getRandomColor(agentName);
+  }
+
+  // Get a random color for agents without predefined colors
+  const getRandomColor = (agentName) => {
+    const colors = {
+      "Crop Recommender Agent": '#FF6B6B',     // Using Planner color
+      "Environmental Information Agent": '#45B7D1',   // Using Researcher color
+      "Marketing Information Agent": '#4ECDC4',       // Using Executor color
+      "Soil Information Agent": '#FFA07A',      // Using Critic color
+      "Verification Agent": '#F7B801',        // Using Coordinator color
+      "Summary Agent": '#8B5CF6',             // New color for Summary Agent
+
+      // Frontend friendly names
+      "Crop Recommender": '#FF6B6B',
+      "Environmental Info": '#45B7D1',
+      "Marketing Info": '#4ECDC4',
+      "Soil Health": '#FFA07A',
+      "Verification": '#F7B801',
+      "Summary": '#8B5CF6',
+
+      // User for the final interaction
+      "User": '#6366F1',
+
+      // Backend agent abbreviated names as fallback
+      CropRecommenderAgent: '#FF6B6B',
+      EnvironmentalInfoAgent: '#45B7D1',
+      MarketingInfoAgent: '#4ECDC4',
+      SoilHealthInfoAgent: '#FFA07A',
+      VerificationAgent: '#F7B801',
+      SummaryAgent: '#8B5CF6',
+    }
+    return colors[agentName]
   }
 
   // Initialize agents with positions
@@ -44,7 +74,7 @@ const AgentVisualization = ({ interactions, onEdgeClick, highlightedStep }) => {
         id: name,
         x: centerX + radius * Math.cos(angle),
         y: centerY + radius * Math.sin(angle),
-        color: agentColors[name] || getRandomColor(),
+        color: getAgentColor(name),
       }
     })
 
@@ -128,13 +158,7 @@ const AgentVisualization = ({ interactions, onEdgeClick, highlightedStep }) => {
     })
 
     setConnectionPaths(paths)
-  }, [interactions])
-
-  // Get a random color for agents without predefined colors
-  const getRandomColor = () => {
-    const colors = ['#6366F1', '#8B5CF6', '#EC4899', '#14B8A6', '#F59E0B']
-    return colors[Math.floor(Math.random() * colors.length)]
-  }
+  }, [interactions, agentColors])
 
   // Calculate point along a quadratic bezier curve
   const getPointOnQuadraticCurve = (startX, startY, controlX, controlY, endX, endY, t) => {
@@ -396,7 +420,6 @@ const AgentVisualization = ({ interactions, onEdgeClick, highlightedStep }) => {
           >
             <span className="text-xs text-center">{agent.id}</span>
           </div>
-          {/* Remove the separate label below the circle */}
           {/* Node tooltip - only show on hover */}
           {hoveredNode === agent.id && (
             <div
@@ -409,7 +432,6 @@ const AgentVisualization = ({ interactions, onEdgeClick, highlightedStep }) => {
           )}
         </div>
       ))}
-
 
       {/* Legend for sequence numbers */}
       <div className="absolute bottom-2 right-2 bg-white/90 p-2 rounded-lg shadow-sm border border-slate-200 text-xs">

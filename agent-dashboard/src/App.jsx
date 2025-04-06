@@ -8,11 +8,11 @@ import {
   AccordionContent,
 } from "@/components/ui/accordion"
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
-import { Loader2 } from "lucide-react"
+import { Loader2, TerminalSquare } from "lucide-react"
 import ReactMarkdown from 'react-markdown';
 import AgentVisualization from "./components/AgentVisualization"
 import SequentialTreeVisualization from './components/SequentialTreeVisualization'
-import MockWebSocket from "./MockSocket"
+// import DebugHelper from './components/DebugHelper' // Import if you want debugging
 
 function App() {
   const [prompt, setPrompt] = useState("");
@@ -22,6 +22,7 @@ function App() {
   const [agentInteractions, setAgentInteractions] = useState([]);
   const [showAnalysisModal, setShowAnalysisModal] = useState(false);
   const [selectedNode, setSelectedNode] = useState(null);
+  const [agents, setAgents] = useState({});
   const socketRef = useRef(null);
   const conversationStateRef = useRef({
     lastAgent: null,
@@ -29,31 +30,79 @@ function App() {
     conversationHistory: []
   });
 
-  // Define agent colors
+  // Define agent colors and mapping from backend names to frontend names
   const agentColors = {
-    Planner: '#FF6B6B',
-    Executor: '#4ECDC4',
-    Researcher: '#45B7D1',
-    Critic: '#FFA07A',
-    Coordinator: '#F7B801',
+    // Backend agent full names
+    "Crop Recommender Agent": '#FF6B6B',     // Using Planner color
+    "Environmental Information Agent": '#45B7D1',   // Using Researcher color
+    "Marketing Information Agent": '#4ECDC4',       // Using Executor color
+    "Soil Information Agent": '#FFA07A',      // Using Critic color
+    "Verification Agent": '#F7B801',        // Using Coordinator color
+    "Summary Agent": '#8B5CF6',             // New color for Summary Agent
+    
+    // Frontend friendly names
+    "Crop Recommender": '#FF6B6B',
+    "Environmental Info": '#45B7D1',
+    "Marketing Info": '#4ECDC4',
+    "Soil Health": '#FFA07A',
+    "Verification": '#F7B801',
+    "Summary": '#8B5CF6',
+    
+    // User for the final interaction
+    "User": '#6366F1',
+    
+    // Backend agent abbreviated names as fallback
+    CropRecommenderAgent: '#FF6B6B',
+    EnvironmentalInfoAgent: '#45B7D1',
+    MarketingInfoAgent: '#4ECDC4',
+    SoilHealthInfoAgent: '#FFA07A',
+    VerificationAgent: '#F7B801',
+    SummaryAgent: '#8B5CF6',
   };
 
-  // WebSocket setup - keep this for future backend integration
+  // Map backend agent names to frontend friendly names
+  const agentNameMapping = {
+    "Crop Recommender Agent": "Crop Recommender",
+    "Environmental Information Agent": "Environmental Info",
+    "Marketing Information Agent": "Marketing Info", 
+    "Soil Information Agent": "Soil Health",
+    "Verification Agent": "Verification",
+    "Summary Agent": "Summary",
+    
+    // Also include the backend names for fallback
+    CropRecommenderAgent: "Crop Recommender",
+    EnvironmentalInfoAgent: "Environmental Info",
+    MarketingInfoAgent: "Marketing Info",
+    SoilHealthInfoAgent: "Soil Health",
+    VerificationAgent: "Verification",
+    SummaryAgent: "Summary",
+  };
+
+  // WebSocket setup for backend integration
   useEffect(() => {
+    // Connect to FastAPI backend
     socketRef.current = new WebSocket("ws://localhost:8000/ws");
 
     socketRef.current.onopen = () => {
-      console.log("✅ WebSocket connected");
+      console.log("✅ WebSocket connected to backend");
     };
 
     socketRef.current.onmessage = (event) => {
-        const newText = event.data;
-        setOutput(prev => prev + newText);
+      try {
+        const data = JSON.parse(event.data);
+        console.log("Received websocket data:", data);
+        
+        handleWebSocketMessage(data);
+      } catch (error) {
+        console.error("Error parsing WebSocket message:", error);
+        setOutput(prev => prev + "\nError processing server response");
         setLoading(false);
+      }
     };
 
     socketRef.current.onerror = (error) => {
       console.error("WebSocket error:", error);
+      setOutput(prev => prev + "\nError connecting to server");
       setLoading(false);
     };
 
@@ -64,70 +113,153 @@ function App() {
     return () => socketRef.current?.close();
   }, []);
 
-  // Function to simulate agent interactions for frontend development
-  const simulateAgentInteractions = () => {
-    const agents = ["Coordinator", "Planner", "Researcher", "Executor", "Critic"];
-    let interactionCount = 0;
+  // Handle WebSocket messages from backend
+  const handleWebSocketMessage = (data) => {
+    const { event } = data;
 
-    const addRandomInteraction = () => {
-      if (interactionCount >= 10) {
-        setLoading(false);
-        return;
-      }
+    switch (event) {
+      case "initial_status":
+        // Initialize agent status when connection established
+        if (data.agents) {
+          const agentsObj = {};
+          data.agents.forEach(agent => {
+            agentsObj[agent.name] = agent;
+          });
+          setAgents(agentsObj);
+        }
+        break;
 
-      const sourceIndex = Math.floor(Math.random() * agents.length);
-      let targetIndex;
-      do {
-        targetIndex = Math.floor(Math.random() * agents.length);
-      } while (targetIndex === sourceIndex);
+      case "agents_reset":
+        // Handle agents reset (ignore as it's just for state resetting)
+        console.log("Agents reset received");
+        break;
+        
+      case "agent_status_update":
+        // Process agent status updates
+        if (data.agent) {
+          const { agent } = data;
+          const agentName = agent.name;
+          const friendlyName = agentNameMapping[agentName] || agentName;
+          
+          // Update output with agent status
+          if (agent.status && agent.status !== "idle") {
+            setOutput(prev => `${prev}\nAgent ${friendlyName}: ${agent.status}\n`);
+          }
+          
+          // Store previous state to detect changes
+          const previousAgent = agents[agentName];
+          
+          // Create interactions when next_agent changes
+          if (agent.next_agent && agent.next_agent.length > 0) {
+            // Only create interactions if this is a new update with next_agent
+            const isNewInteraction = 
+              !previousAgent || 
+              !previousAgent.next_agent || 
+              previousAgent.next_agent.length === 0 ||
+              JSON.stringify(previousAgent.next_agent) !== JSON.stringify(agent.next_agent);
+              
+            if (isNewInteraction) {
+              agent.next_agent.forEach(nextAgent => {
+                // Format a simplified thought process from the log if available
+                let thoughtProcess = "Processing data...";
+                if (agent.log) {
+                  try {
+                    const logObj = JSON.parse(agent.log);
+                    thoughtProcess = logObj.thinking || 
+                                    "This agent has completed its analysis and is passing data to the next agent.";
+                  } catch (e) {
+                    thoughtProcess = agent.log.substring(0, 200) + "...";
+                  }
+                }
+                
+                addAgentInteraction(
+                  agentName,
+                  nextAgent,
+                  `Sending data to ${agentNameMapping[nextAgent] || nextAgent}`,
+                  thoughtProcess
+                );
+              });
+            }
+          }
+          
+          // Update agents state
+          setAgents(prev => ({
+            ...prev,
+            [agentName]: agent
+          }));
+        }
+        break;
 
-      const source = agents[sourceIndex];
-      const target = agents[targetIndex];
+      case "workflow_completed":
+        // Process completed workflow
+        if (data.result) {
+          // Create a final interaction from the last active agent to show completion
+          const activeAgents = Object.entries(agents)
+            .filter(([_, agent]) => agent.status !== 'idle' && agent.status !== 'error')
+            .map(([name]) => name);
+            
+          if (activeAgents.length > 0) {
+            const lastAgent = activeAgents[activeAgents.length - 1];
+            addAgentInteraction(
+              lastAgent, 
+              "User", 
+              "Final report completed",
+              "The workflow has completed successfully and produced a final report."
+            );
+          }
+          
+          setOutput(prev => `${prev}\n\nFinal Report:\n${data.result}`);
+          setLoading(false);
+        }
+        break;
 
-      const messages = [
-        "Requesting information",
-        "Sharing analysis results",
-        "Delegating subtask",
-        "Providing context",
-        "Asking for verification",
-        "Sending recommendations"
-      ];
-      const message = messages[Math.floor(Math.random() * messages.length)];
+      case "error":
+        // Handle errors
+        if (data.message) {
+          setOutput(prev => `${prev}\nError: ${data.message}\n`);
+          setLoading(false);
+        }
+        break;
 
-      const thoughtProcess = `I am ${source} and I'm thinking about how to handle this task. 
-      After analyzing the situation, I've decided to ${message.toLowerCase()} to ${target}.
-      This will help us move forward with the solution.`;
+      case "workflow_message":
+        // Handle workflow messages
+        if (data.message) {
+          setOutput(prev => `${prev}\n${data.message}`);
+        }
+        break;
 
-      addAgentInteraction(source, target, message, thoughtProcess);
-      interactionCount++;
-
-      // Generate simulated output text
-      const outputTexts = [
-        `Agent ${source} is processing the request...`,
-        `Agent ${target} is analyzing the data from ${source}...`,
-        `Collaboration between ${source} and ${target} is in progress...`,
-        `${target} received task from ${source} and is working on it...`
-      ];
-
-      setOutput(prev => prev + "\n" + outputTexts[Math.floor(Math.random() * outputTexts.length)]);
-
-      // Schedule next interaction
-      setTimeout(addRandomInteraction, Math.random() * 800 + 400);
-    };
-
-    // Start the simulation
-    setTimeout(addRandomInteraction, 500);
+      default:
+        // Handle any other message types
+        console.log("Unhandled event type:", event);
+        if (data && typeof data === "string") {
+          setOutput(prev => prev + data);
+        }
+    }
   };
 
   // Add a new agent interaction to the state
   const addAgentInteraction = (source, target, message, thoughtProcess) => {
-    setAgentInteractions(prev => [...prev, {
-        source,
-        target,
+    // Map backend agent names to frontend names if needed
+    const sourceName = agentNameMapping[source] || source;
+    const targetName = agentNameMapping[target] || target;
+    
+    // Don't add duplicate interactions
+    const isDuplicate = agentInteractions.some(
+      interaction => 
+        interaction.source === sourceName && 
+        interaction.target === targetName && 
+        interaction.message === message
+    );
+    
+    if (!isDuplicate) {
+      setAgentInteractions(prev => [...prev, {
+        source: sourceName,
+        target: targetName,
         message,
-      thoughtProcess,
+        thoughtProcess,
         timestamp: new Date().getTime()
-    }]);
+      }]);
+    }
   };
 
   const handleViewDeepAnalysis = () => {
@@ -143,42 +275,17 @@ function App() {
 
     // Reset conversation state
     conversationStateRef.current = {
-      lastAgent: "Coordinator",
-      activeAgents: { "Coordinator": true },
+      lastAgent: null,
+      activeAgents: {},
       conversationHistory: []
     };
 
-    // Simulate initial agent setup
-    setTimeout(() => {
-      const thoughtProcess1 = "I'm the Coordinator and I need to initialize the planning process. I'll delegate this to the Planner agent.";
-      addAgentInteraction("Coordinator", "Planner", "Initializing task planning", thoughtProcess1);
-      setOutput("Agent Coordinator is initializing the task...\n");
-
-      setTimeout(() => {
-        const thoughtProcess2 = "As the Planner, I've received the task from the Coordinator. I'll acknowledge receipt and start planning.";
-        addAgentInteraction("Planner", "Coordinator", "Acknowledging task", thoughtProcess2);
-        setOutput(prev => prev + "Agent Planner is acknowledging the task from Coordinator...\n");
-
-        setTimeout(() => {
-          const thoughtProcess3 = "I need more information to create a comprehensive plan. I'll ask the Researcher to gather relevant data.";
-          addAgentInteraction("Planner", "Researcher", "Requesting background information", thoughtProcess3);
-          setOutput(prev => prev + "Agent Planner is requesting background information from Researcher...\n");
-
-          setTimeout(() => {
-            const thoughtProcess4 = "I've gathered the necessary information and will provide it to the Planner to help with the task.";
-            addAgentInteraction("Researcher", "Planner", "Providing relevant data", thoughtProcess4);
-            setOutput(prev => prev + "Agent Researcher is providing relevant data to Planner...\n");
-
-            // Start random interactions after initial setup
-            simulateAgentInteractions();
-          }, 800);
-        }, 700);
-      }, 600);
-    }, 500);
-
-    // Keep the WebSocket send for future backend integration
+    // Send prompt to the backend
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
       socketRef.current.send(prompt);
+    } else {
+      setOutput("Error: WebSocket not connected. Please refresh the page and try again.");
+      setLoading(false);
     }
   };
 
@@ -187,13 +294,13 @@ function App() {
       <Card className="w-full max-w-2xl backdrop-blur-md bg-white/80 border border-white/40 shadow-2xl rounded-2xl hover:shadow-purple-200 transition-shadow">
         <CardHeader>
           <CardTitle className="text-3xl font-bold text-indigo-800 flex items-center gap-2">
-            <span className="text-4xl">🧠</span> Multi-Agent Dashboard
+            <span className="text-4xl">🧠</span> Multi-Agent Crop Planner
           </CardTitle>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="flex flex-col md:flex-row gap-4">
             <Input
-              placeholder="Enter your prompt"
+              placeholder="Enter a location for crop recommendations"
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
               className="rounded-xl border-indigo-300 focus:border-indigo-500"
@@ -202,8 +309,15 @@ function App() {
             <Button
               type="submit"
               className="rounded-xl bg-gradient-to-r from-indigo-500 to-purple-600 text-white font-semibold shadow-md hover:brightness-110 transition-all"
+              disabled={loading}
             >
-              Submit
+              {loading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Processing
+                </>
+              ) : (
+                "Submit"
+              )}
             </Button>
           </form>
         </CardContent>
@@ -233,16 +347,16 @@ function App() {
                     <div className="mb-6">
                       <h3 className="text-lg font-semibold mb-4 text-indigo-800">Agent Interactions</h3>
                       <div className="bg-white rounded-xl border border-slate-200 shadow-sm">
-                        <AgentVisualization interactions={agentInteractions} />
+                        <AgentVisualization interactions={agentInteractions} agentColors={agentColors}/>
                       </div>
-                        <div className="mt-3 flex justify-center">
-                          <button
-                            className="px-4 py-2 bg-indigo-600 text-white rounded-md shadow-sm hover:bg-indigo-700 transition-colors"
-                            onClick={() => handleViewDeepAnalysis()}
-                          >
-                            View In-depth Agent Analysis
-                          </button>
-                        </div>
+                      <div className="mt-3 flex justify-center">
+                        <button
+                          className="px-4 py-2 bg-indigo-600 text-white rounded-md shadow-sm hover:bg-indigo-700 transition-colors"
+                          onClick={() => handleViewDeepAnalysis()}
+                        >
+                          View In-depth Agent Analysis
+                        </button>
+                      </div>
                     </div>
                   )}
 
@@ -261,6 +375,9 @@ function App() {
                       </div>
                     )}
                   </div>
+                  
+                  {/* Uncomment to add debug helper if needed */}
+                  {/* <DebugHelper agents={agents} showRawData={true} /> */}
                 </AccordionContent>
               </div>
             </AccordionItem>
