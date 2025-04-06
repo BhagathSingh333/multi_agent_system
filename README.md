@@ -35,14 +35,13 @@ AgroIntelligence:
  
 ## 🤖 Agent Overview
  
-| Agent Name              | Description                                                             |
-|------------------------|--------------------------------------------------------------------------|
-| `CropRecommenderAgent` | Recommends crops suitable for the region using geolocation and agronomy. |
-| `EnvironmentalInfoAgent` | Checks climate requirements for the recommended crops.                |
-| `MarketingInfoAgent`   | Assesses current demand and market trends.                               |
-| `SoilHealthInfoAgent`  | Analyzes soil quality, nutrients, and pH levels.                         |
-| `VerificationAgent`    | Makes sure that data given by all the domain Agents is complete and resolves conflicts.|
-| `SummaryAgent`         | Synthesizes all results into final recommendation output.                |
+| Agent Name              | Description                                                                                                                                          |
+|------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `CropRecommenderAgent` | Recommends crops suitable for the region using geolocation and agronomy. Starts the workflow, passing the shortlist to downstream agents              |
+| `EnvironmentalInfoAgent` | Enriches each candidate crop with location‑specific Environment specific details.Runs in parallel with other agents; data is merged afterward.​      |
+| `MarketingInfoAgent`   | Evaluates the economic feasibility of each crops. Scrapes market data, weighs stability and demand to finalize economic viability for each crop.​      |
+| `SoilHealthInfoAgent`  | Analyzes soil quality, nutrients, and pH levels. Fetches soil surveys, compares actual values with crop‑specific requirements.                        |
+| `SummaryAgent`         | Crafts a clear, farmer‑friendly report from all verified data. Combines all domain insights, ranks crops, and adds practical guidance.                |
  
 ---
  
