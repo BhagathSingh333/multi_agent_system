@@ -100,8 +100,6 @@ class VerificationResponse(AgentOutput):
 class SummaryReport(AgentOutput):
     report: str = Field(..., description="A detailed summary report including recommendations and rationale with clean markdown format.")
 
-response_cache = {}
-
 def make_chat(max_tokens: int = 2000):
     return OpenAIChat(id="gpt-4o", api_key=openai_api_key, max_tokens=max_tokens)
 
@@ -211,46 +209,9 @@ class CropPlannerWorkflow(Workflow):
     )
     FALLBACK_MESSAGE = ("Information may be behind paid sources. ")
     status_callback: callable = lambda msg: None
-    cache = {}
-
-    def get_cache_key(self, agent_name, prompt):
-        import hashlib
-        prompt_hash = hashlib.md5(prompt.encode()).hexdigest()
-        return f"{agent_name}:{prompt_hash}"
 
     def safe_run(self, agent: Agent, prompt: str, empty):
         agent_name = agent.description.split()[2].replace("*", "")[:-1]
-        cache_key = self.get_cache_key(agent_name, prompt)
-        
-        if cache_key in self.cache:
-            logger.info(f"[CropPlanner] Cache hit for {agent_name}")
-            cached_response = self.cache[cache_key]
-            
-            self.log_steps.append({
-                "agent": agent_name,
-                "prompt": prompt,
-                "response": json.dumps(
-                    cached_response.dict() if hasattr(cached_response, 'dict') else cached_response,
-                    indent=2
-                ),
-                "source": "cache"
-            })
-            
-            # Determine next_agent based on current agent
-            next_agent = []
-            if agent_name in ["EnvironmentalInfoAgent", "MarketingInfoAgent", "SoilHealthInfoAgent"]:
-                next_agent = ["VerificationAgent"]
-            
-            self.status_callback(
-                AgentStatusUpdate(
-                    agent=agent_name, 
-                    status="Completed task (from cache)",
-                    log=self.log_steps[-1]['response'],
-                    next_agent=next_agent
-                ).json()
-            )
-            
-            return cached_response
         
         try:
             self.status_callback(
@@ -289,8 +250,6 @@ class CropPlannerWorkflow(Workflow):
                 raise result["error"]
                 
             res = result["response"]
-            
-            self.cache[cache_key] = res.content
             
             self.log_steps.append({
                 "agent": agent_name,
